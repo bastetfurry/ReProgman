@@ -6,11 +6,12 @@
        bitmap font is approximated with a Helvetica-flavored family that ships
        a REAL bold face: Microsoft Sans Serif only has a Regular face, and its
        synthesized bold smudges. The list is walked until a family exists, so
-       Windows lands on Arial and macOS on Arial/Helvetica. "MS Gothic" /
-       "Hiragino Kaku Gothic ProN" fill in Japanese glyphs, matching the
-       Windows 3.1J system font. -->
+       Windows lands on Arial, macOS on Arial/Helvetica and Linux on the
+       metric-compatible Liberation Sans (DejaVu Sans as a last resort).
+       "MS Gothic" / "Hiragino Kaku Gothic ProN" / "Noto Sans CJK JP" fill in
+       Japanese glyphs, matching the Windows 3.1J system font. -->
   <Style Selector=":is(Window)">
-    <Setter Property="FontFamily" Value="Arial, Helvetica, MS Gothic, Hiragino Kaku Gothic ProN, Yu Gothic UI" />
+    <Setter Property="FontFamily" Value="Arial, Helvetica, Liberation Sans, DejaVu Sans, MS Gothic, Hiragino Kaku Gothic ProN, Yu Gothic UI, Noto Sans CJK JP" />
     <Setter Property="FontSize" Value="11" />
     <Setter Property="Foreground" Value="Black" />
   </Style>

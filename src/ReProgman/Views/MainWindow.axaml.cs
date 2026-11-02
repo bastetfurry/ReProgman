@@ -547,6 +547,21 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Builds the groups from the platform's program folders. Linux has no folder
+    /// per group, so its .desktop entries are grouped by category instead.
+    /// </summary>
+    private static IReadOnlyList<ProgramGroup> ScanProgramGroups(string mainGroupName)
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            return new DesktopEntryScanner(LinuxDesktop.Locale, LinuxDesktop.Xdg.CurrentDesktops)
+                .Scan(LinuxDesktop.Xdg.ApplicationDirectories, Strings.DesktopGroupName);
+        }
+
+        return new StartMenuScanner(AppEntrySources.ForCurrentPlatform()).Scan(StartMenuRoots, mainGroupName);
+    }
+
+    /// <summary>
     /// The folders the initial groups are built from. macOS mirrors the Windows
     /// per-user / machine-wide pair, with the user's own folder first so that a
     /// privately installed application wins over the system copy.
@@ -574,9 +589,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var roots = StartMenuRoots;
         var mainGroupName = Strings.MainGroupName;
-        Task.Run(() => new StartMenuScanner(AppEntrySources.ForCurrentPlatform()).Scan(roots, mainGroupName)).ContinueWith(
+        Task.Run(() => ScanProgramGroups(mainGroupName)).ContinueWith(
             task =>
             {
                 var groups = task.IsCompletedSuccessfully ? task.Result : [];
@@ -1420,9 +1434,8 @@ public partial class MainWindow : Window
 
     private async Task RefreshFromStartMenu()
     {
-        var roots = StartMenuRoots;
         var mainGroupName = Strings.MainGroupName;
-        var scanned = await Task.Run(() => new StartMenuScanner(AppEntrySources.ForCurrentPlatform()).Scan(roots, mainGroupName));
+        var scanned = await Task.Run(() => ScanProgramGroups(mainGroupName));
         var result = StartMenuMerge.Merge(_groups.Select(g => g.Vm.ToModel()).ToList(), scanned);
         if (result.AddedGroups == 0 && result.AddedItems == 0)
         {
@@ -1643,7 +1656,9 @@ public partial class MainWindow : Window
             case "item-props":
                 _sceneDialog = OperatingSystem.IsMacOS()
                     ? new ItemPropertiesDialog("TextEdit", "/System/Applications/TextEdit.app")
-                    : new ItemPropertiesDialog("Notepad", @"C:\Windows\notepad.exe");
+                    : OperatingSystem.IsLinux()
+                        ? new ItemPropertiesDialog("Text Editor", "/usr/share/applications/org.gnome.TextEditor.desktop")
+                        : new ItemPropertiesDialog("Notepad", @"C:\Windows\notepad.exe");
                 _ = _sceneDialog.ShowDialog(this);
                 break;
             case "move":

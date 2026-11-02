@@ -1,19 +1,27 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using ReProgman.Model;
 
 namespace ReProgman.Services;
 
 public static class ShellLauncher
 {
     private const string BundleExtension = ".app";
-    private const string OpenTool = "/usr/bin/open";
+    private const string MacOpenTool = "/usr/bin/open";
+    private const string LinuxOpenTool = "xdg-open";
 
     /// <summary>Launches a shortcut or application the way a double click would.</summary>
     public static void Launch(string path, bool minimized = false)
     {
-        if (OperatingSystem.IsMacOS())
+        if (OperatingSystem.IsLinux() && DesktopLaunch.IsDesktopFile(path))
         {
-            StartOnMac(path, arguments: null);
+            StartDesktopEntry(path);
+            return;
+        }
+
+        if (OperatingSystem.IsMacOS() || OperatingSystem.IsLinux())
+        {
+            StartOnUnix(path, arguments: null);
             return;
         }
 
@@ -38,10 +46,17 @@ public static class ShellLauncher
         }
 
         var (fileName, arguments) = SplitCommandLine(text);
-        if (OperatingSystem.IsMacOS())
+        if (OperatingSystem.IsLinux() && DesktopLaunch.IsDesktopFile(fileName))
         {
-            // Run Minimized has no macOS equivalent, so the checkbox is ignored here.
-            StartOnMac(fileName, arguments);
+            // Without file field codes there is nowhere to put the extra arguments.
+            StartDesktopEntry(fileName);
+            return;
+        }
+
+        if (OperatingSystem.IsMacOS() || OperatingSystem.IsLinux())
+        {
+            // Run Minimized has no macOS or Linux equivalent, so the checkbox is ignored here.
+            StartOnUnix(fileName, arguments);
             return;
         }
 
@@ -74,19 +89,48 @@ public static class ShellLauncher
     }
 
     /// <summary>
-    /// Application bundles and documents go through <c>open</c>, which is what
-    /// LaunchServices does for a double click in Finder. Plain executables are
-    /// started directly, because <c>open</c> would only reveal them in an editor.
+    /// Runs the Exec line of a .desktop file. The file itself is not executable,
+    /// and handing it to xdg-open would open it in a text editor.
+    /// </summary>
+    [SupportedOSPlatform("linux")]
+    private static void StartDesktopEntry(string path)
+    {
+        var entry = LinuxDesktop.ReadEntry(path) ?? throw new FileNotFoundException(null, path);
+        var command = DesktopLaunch.ForEntry(entry, path, LinuxDesktop.Terminal)
+            ?? throw new FileNotFoundException(null, path);
+
+        var startInfo = new ProcessStartInfo { FileName = command.FileName, UseShellExecute = false };
+        foreach (var argument in command.Arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        if (command.WorkingDirectory is { } workingDirectory && Directory.Exists(workingDirectory))
+        {
+            startInfo.WorkingDirectory = workingDirectory;
+        }
+
+        Process.Start(startInfo)?.Dispose();
+    }
+
+    /// <summary>
+    /// Application bundles, documents and folders go through the desktop's opener
+    /// (<c>open</c> on macOS, <c>xdg-open</c> on Linux), which is what a double
+    /// click in Finder or the file manager does. Plain executables are started
+    /// directly, because the opener would only show them in an editor.
     /// </summary>
     [SupportedOSPlatform("macos")]
-    private static void StartOnMac(string path, string? arguments)
+    [SupportedOSPlatform("linux")]
+    private static void StartOnUnix(string path, string? arguments)
     {
         var startInfo = new ProcessStartInfo { UseShellExecute = false };
         if (IsBundle(path) || IsDocument(path))
         {
-            startInfo.FileName = OpenTool;
+            startInfo.FileName = OperatingSystem.IsMacOS() ? MacOpenTool : LinuxOpenTool;
             startInfo.ArgumentList.Add(path);
-            if (arguments is { Length: > 0 })
+            // xdg-open takes exactly one argument, so extra arguments only reach
+            // macOS applications.
+            if (OperatingSystem.IsMacOS() && arguments is { Length: > 0 })
             {
                 startInfo.ArgumentList.Add("--args");
                 startInfo.ArgumentList.Add(arguments);
@@ -102,9 +146,13 @@ public static class ShellLauncher
     }
 
     private static bool IsBundle(string path) =>
-        path.TrimEnd('/').EndsWith(BundleExtension, StringComparison.OrdinalIgnoreCase) && Directory.Exists(path);
+        OperatingSystem.IsMacOS()
+            ? path.TrimEnd('/').EndsWith(BundleExtension, StringComparison.OrdinalIgnoreCase) && Directory.Exists(path)
+            // A folder opens in the file manager, like a bundle opens in Finder.
+            : Directory.Exists(path);
 
     [SupportedOSPlatform("macos")]
+    [SupportedOSPlatform("linux")]
     private static bool IsDocument(string path)
     {
         if (!File.Exists(path))

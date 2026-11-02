@@ -29,7 +29,7 @@ public class MinimizedGroupIcon : Border
         _label = new TextBlock
         {
             Text = title,
-            FontFamily = new FontFamily("Microsoft Sans Serif, MS Gothic, Yu Gothic UI"),
+            FontFamily = new FontFamily("Microsoft Sans Serif, Liberation Sans, DejaVu Sans, MS Gothic, Yu Gothic UI, Noto Sans CJK JP"),
             FontSize = 11,
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,

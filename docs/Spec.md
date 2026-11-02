@@ -7,16 +7,16 @@ A desktop application that reproduces the look and feel of the Windows 3.1
 Program Manager (progman.exe), built on .NET 10 + Avalonia 11. The name means a
 re-implementation of the original (Progman); the window title stays
 "Program Manager" / "プログラム マネージャ" exactly as in the original.
-It runs on Windows and macOS, and **keeps the Windows 3.1 look and behaviour on
-both** (no global menu bar, no traffic light buttons, no other macOS-native
-conventions).
+It runs on Windows, macOS and Linux, and **keeps the Windows 3.1 look and
+behaviour on all of them** (no global menu bar, no traffic light buttons, no
+other macOS-native or Linux desktop conventions).
 
 ## Project layout
 
 | Project | Role |
 |---|---|
-| `src/ReProgman.Model` | UI-independent, OS-independent logic (INI reading/writing, settings, program folder scanning, .icns / plist parsing, storage location resolution). net10.0 |
-| `src/ReProgman` | The Avalonia UI itself (net10.0, shared between Windows and macOS). The executable is named `ReProgman` |
+| `src/ReProgman.Model` | UI-independent, OS-independent logic (INI reading/writing, settings, program folder scanning, .icns / plist parsing, .desktop / icon theme lookup, storage location resolution). net10.0 |
+| `src/ReProgman` | The Avalonia UI itself (net10.0, shared between Windows, macOS and Linux). The executable is named `ReProgman` |
 | `test/ReProgman.Model.Tests` | xUnit tests for the model (xunit.v3 / Microsoft.Testing.Platform) |
 | `tools/ReProgman.IconExport` | Developer tool, never shipped: renders the committed icon assets from the app's own artwork (see "The application icon") |
 
@@ -40,6 +40,7 @@ conventions).
   |---|---|
   | Windows | The Start Menu `Programs` folders (user and common) |
   | macOS | `~/Applications`, `/Applications`, `/System/Applications` |
+  | Linux | `$XDG_DATA_HOME/applications`, then `applications` below each `$XDG_DATA_DIRS` entry (this includes the Flatpak exports) |
 
 - Each top-level folder becomes one group, shown in an MDI child window.
 - Entries directly under a root go into the **Main** group, following the
@@ -61,6 +62,33 @@ conventions).
   becomes an item in the Main group rather than a group of its own. The display
   name is the bundle name without `.app` (no localized `CFBundleDisplayName`
   resolution).
+- **Linux is the exception to the folder rules above** (`DesktopEntryScanner`):
+  the `.desktop` files lie flat in one directory, so the groups come from each
+  entry's `Categories` key instead. The first registered main category decides:
+
+  | Categories | Group |
+  |---|---|
+  | `System`, none, or only unregistered ones | Main |
+  | `Utility` | Accessories |
+  | `Game` | Games |
+  | `Settings` | Control Panel |
+  | `Office` / `Graphics` / `Network` | Office / Graphics / Internet |
+  | `AudioVideo`, `Audio`, `Video` | Multimedia |
+  | `Development` / `Education` / `Science` | Development / Education / Science |
+
+  Main, Accessories, Games and Control Panel follow the Windows 3.1 names.
+  Settings gets its own group because desktops ship dozens of settings panels
+  that would otherwise bury Main.
+  - Entries are skipped unless `Type=Application`, and when `NoDisplay` or
+    `Hidden` is true, or `OnlyShowIn` / `NotShowIn` exclude the desktops in
+    `$XDG_CURRENT_DESKTOP`.
+  - The desktop file id (the path below the applications directory with `/`
+    replaced by `-`) decides shadowing: the first directory wins, even when its
+    entry is hidden, which is how a user removes a system-wide entry.
+  - The display name is `Name`, localized from `LC_ALL` / `LC_MESSAGES` / `LANG`
+    by the spec's `lang_COUNTRY@MODIFIER` → `lang` fallback; the file name is
+    used when there is no `Name`.
+  - The item path is the `.desktop` file itself.
 - Groups are sorted alphabetically with Main first; items are sorted
   alphabetically.
 - Icons are loaded at 32x32, one after another on a dedicated background thread.
@@ -71,17 +99,35 @@ conventions).
   the `.icns` that `CFBundleIconFile` in `Contents/Info.plist` points at
   (`IcnsDecoder`: PNG chunks are used as they are, the older RLE 24-bit and ARGB
   chunks are expanded to BGRA, and the representation closest to 32px wins).
+  Linux resolves the entry's `Icon` key through the freedesktop.org Icon Theme
+  Specification (`IconThemeLookup`: the selected theme, its `Inherits` chain,
+  `hicolor`, then `/usr/share/pixmaps`; exact size first, then the closest;
+  `@2x` directories are skipped). The selected theme is read from `kdeglobals`
+  on KDE, otherwise from GSettings (the Cinnamon, MATE or GNOME schema according
+  to `$XDG_CURRENT_DESKTOP`), then `gtk-3.0/settings.ini`, falling back to
+  `hicolor`. PNGs are loaded directly and scaled to 32x32 when needed; SVGs are
+  rendered by the external `rsvg-convert` (librsvg), and when that is not
+  installed only PNGs are looked up.
   When no icon can be obtained, the hand-drawn group icon art is used instead.
 
 ### Launching applications
 - Double-click an item, or select it and press Enter / File → Open. Windows hands
   the shortcut to `UseShellExecute` as it is; macOS passes `.app` bundles and
   documents to `open` (the same as double-clicking in Finder) and starts
-  executable files directly.
+  executable files directly. Linux runs a `.desktop` item's `Exec` line
+  (`DesktopExec`: the spec's quoting rules; `%f %F %u %U` and the deprecated
+  codes are dropped because nothing is being opened, `%i` / `%c` / `%k` are
+  expanded) in its `Path` directory. `Terminal=true` entries are wrapped in a
+  terminal emulator: `$TERMINAL -e` when set, otherwise the first installed one
+  of `xdg-terminal-exec`, `x-terminal-emulator`, `gnome-terminal`, `konsole`, …,
+  `xterm`. Other paths behave as on macOS, with `xdg-open` instead of `open` for
+  documents and folders.
 - File → Run...: a dialog with a command line box, a Run Minimized check box and
   Browse...
 - Options → Minimize on Use minimizes the main window when something is launched.
-- Run Minimized has no macOS equivalent, so the check box stays but is ignored.
+- Run Minimized has no macOS or Linux equivalent, so the check box stays but is
+  ignored there. Linux passes no Run arguments to a `.desktop` file or a
+  document, since neither `Exec` without file codes nor `xdg-open` takes any.
 - A failed launch shows a Windows 3.1 style message dialog.
 
 ### Editing groups and items (File menu)
@@ -113,7 +159,7 @@ conventions).
 
 ### Importing from the program folders (File → Refresh from ...)
 - The menu wording follows the platform (Windows: Refresh from Start Menu,
-  macOS: Refresh from Applications).
+  macOS and Linux: Refresh from Applications).
 - The program folders are scanned again, and only the groups and items that are
   missing from `Groups.ini` (matched by name, case-insensitively) are added; the
   counts are then reported.
@@ -192,7 +238,7 @@ conventions).
 - Dragging the sizing frame resizes the window in 8 directions, with the edges
   that were not grabbed staying put and `MinWidth`/`MinHeight` pinning the
   grabbed edge. The main window hands the drag to the window manager
-  (`BeginResizeDrag`) on Windows, and runs it itself on macOS, where Avalonia's
+  (`BeginResizeDrag`) on Windows and Linux (X11), and runs it itself on macOS, where Avalonia's
   backend implements that call as an empty method. The arithmetic behind both
   paths, and behind the MDI children, is `WindowResize.Drag` in the Model.
 - The macOS drag reads the pointer from the window server (`MacPointer`) instead
@@ -241,12 +287,13 @@ conventions).
   - System / caption / menu / dialog text: `Arial, Helvetica, ...` 14px bold.
     Microsoft Sans Serif (micross.ttf) only has a Regular face, and the
     synthesized bold smears, so a Helvetica-style family with a real bold face is
-    used instead (Arial on Windows, Arial or Helvetica on macOS). The original
-    System font is a Helvetica derivative as well.
+    used instead (Arial on Windows, Arial or Helvetica on macOS, the
+    metric-compatible Liberation Sans or else DejaVu Sans on Linux). The
+    original System font is a Helvetica derivative as well.
   - Icon labels: `Microsoft Sans Serif, Helvetica, ...` 11px (a real Regular
     face).
-  - Japanese glyphs come from the `MS Gothic` / `Hiragino Kaku Gothic ProN`
-    fallbacks. Shapes use `EdgeMode=Aliased` to reproduce the jagged edges.
+  - Japanese glyphs come from the `MS Gothic` / `Hiragino Kaku Gothic ProN` /
+    `Noto Sans CJK JP` fallbacks. Shapes use `EdgeMode=Aliased` to reproduce the jagged edges.
   - RenderOptions are inherited per top level, so windows and dialogs get
     Alias/Aliased from a `Loaded` class handler on `TopLevel`. Popups (menus and
     flyouts) are separate top levels that the handler never reaches, so the roots
@@ -295,6 +342,9 @@ conventions).
   writable (App Translocation, a read-only volume), the app falls back to
   `~/Library/Application Support/ReProgman`. Writability is decided by actually
   writing a probe file.
+- On Linux the same probe decides, and the fallback is
+  `$XDG_CONFIG_HOME/ReProgman` (`~/.config/ReProgman`), because a packaged
+  install usually sits in a root-owned directory.
 - Windows stays portable-only as before, and silently gives up when it cannot
   write.
 - What is saved: the position, size and state of the main window; the position,
@@ -349,7 +399,7 @@ about two seconds after starting and then exits. Scenes: `file-menu`,
 `options-menu`, `window-menu`, `run`, `about`, `exit`, `small`, `free-icons`,
 `new-object`, `item-props`, `move`, `maximized`. This mode saves no settings
 (`Groups.ini` included) and draws popups inside the window (OverlayPopups) so
-they can be captured. It works on both the Windows and the macOS backend.
+they can be captured. It works on the Windows, macOS and Linux (X11) backends.
 Note: on a first run, with no `Groups.ini` yet, scanning the program folders and
 loading the icons may not finish within those two seconds, and some icons are
 captured as the substitute art.
@@ -425,9 +475,19 @@ CI runner in particular) does not have.
   are out of
   scope; a downloaded `.app` needs
   `xattr -d com.apple.quarantine <path>`.
+- Publish on Linux with this script (`clang` and the zlib development files are
+  required):
+
+  ```bash
+  ./build/publish-linux.sh   # output: artifacts/publish-linux/ReProgman-<rid>.tar.gz
+  ```
+
+  The tarball holds a `ReProgman-<rid>/` folder with the executable and the
+  native Skia / HarfBuzz libraries next to it; tar keeps the executable bit.
 - `.github/workflows/build.yml` builds the same binaries on demand, leaves them
   as run artifacts and attaches them to a **draft** release: `ReProgman-win-x64.zip`,
-  `ReProgman-win-arm64.zip` and `ReProgman-osx-arm64.zip`. It is
+  `ReProgman-win-arm64.zip`, `ReProgman-osx-arm64.zip`,
+  `ReProgman-linux-x64.tar.gz` and `ReProgman-linux-arm64.tar.gz`. It is
   `workflow_dispatch` only and takes an optional `tag` input, which defaults to
   `build-<run number>`. The release is created with `gh release create --draft`,
   so nothing is public and no tag exists until it is published by hand;
@@ -439,7 +499,10 @@ CI runner in particular) does not have.
   local Visual Studio 2026 install, and win-arm64 cross-compiles from the x64
   runner because the runner image carries the ARM64 MSVC tools. The bundle is
   packed with `ditto`, because a zip of the bare `.app` directory would lose the
-  executable bit.
+  executable bit. The Linux jobs run the tests and then `build/publish-linux.sh`,
+  each on a runner of its own architecture (`ubuntu-latest`,
+  `ubuntu-24.04-arm`), since NativeAOT does not cross-compile between Linux
+  architectures without a sysroot.
 - Implementation constraints that AOT imposes:
   - No reflection-based bindings: `AvaloniaUseCompiledBindingsByDefault=true`,
     and no `{Binding}` in ControlTheme setters (icon positions are set from code
@@ -451,14 +514,24 @@ CI runner in particular) does not have.
 
 ## Platform-specific implementation
 - `ReProgman.Model` is entirely OS-independent. The platform differences are
-  absorbed in two places:
+  absorbed in these places:
   - `IAppEntrySource` (`ShortcutFileSource` / `ApplicationBundleSource`): the
     rules for enumerating the program folders
   - `StorageLocation`: stepping out of the `.app` bundle, and the write probe
+  - Linux: `XdgDirectories`, `KeyFile`, `DesktopEntry`, `DesktopExec`,
+    `DesktopLaunch`, `DesktopEntryScanner` and `IconThemeLookup` /
+    `IconThemeSettings`. They take the environment and the locale as
+    parameters, so they are tested on every OS.
 - In `ReProgman` the branches are limited to `IconLoader` (Windows:
-  `IconExtractor` / macOS: `MacIconLoader`), `ShellLauncher`, `AppStorage`,
+  `IconExtractor` / macOS: `MacIconLoader` / Linux: `LinuxIconLoader`),
+  `ShellLauncher`, `AppStorage`, `MainWindow.ScanProgramGroups`,
   `MainWindow.StartMenuRoots`, `MainWindow.UsesManualResize` and
-  `Strings.MenuRefresh`.
+  `Strings.MenuRefresh`. `LinuxDesktop` holds the session facts (XDG
+  directories, locale, terminal) that the Linux branches share.
+- Linux needs no P/Invoke; it calls the desktop's own command line tools instead:
+  `xdg-open`, `gsettings` and `rsvg-convert`. All of them are optional — without
+  them documents do not open, the icon theme falls back to `hicolor`, or SVG
+  icons are skipped.
 - The P/Invokes are fetching shell icons on Windows, and reading the pointer
   position from CoreGraphics on macOS (`MacPointer`, used only by a sizing drag).
   The macOS icon and plist parsing is all managed code (in `ReProgman.Model`,

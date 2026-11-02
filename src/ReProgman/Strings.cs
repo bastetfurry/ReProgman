@@ -1,3 +1,5 @@
+using ReProgman.Model;
+
 namespace ReProgman;
 
 /// <summary>
@@ -17,6 +19,24 @@ public static class Strings
     public static string AppTitle => T("Program Manager", "プログラム マネージャ");
     public static string MainGroupName => T("Main", "メイン");
 
+    // Linux builds its groups from the menu categories instead of folders. Main,
+    // Accessories, Games and Control Panel reuse the Windows 3.1(J) names.
+    public static string DesktopGroupName(DesktopMenuGroup group) => group switch
+    {
+        DesktopMenuGroup.Main => MainGroupName,
+        DesktopMenuGroup.Accessories => T("Accessories", "アクセサリ"),
+        DesktopMenuGroup.Games => T("Games", "ゲーム"),
+        DesktopMenuGroup.ControlPanel => T("Control Panel", "コントロール パネル"),
+        DesktopMenuGroup.Office => T("Office", "オフィス"),
+        DesktopMenuGroup.Graphics => T("Graphics", "グラフィックス"),
+        DesktopMenuGroup.Internet => T("Internet", "インターネット"),
+        DesktopMenuGroup.Multimedia => T("Multimedia", "マルチメディア"),
+        DesktopMenuGroup.Development => T("Development", "開発"),
+        DesktopMenuGroup.Education => T("Education", "教育"),
+        DesktopMenuGroup.Science => T("Science", "科学"),
+        _ => group.ToString(),
+    };
+
     // File menu
     public static string MenuFile => T("_File", "ファイル(_F)");
     public static string MenuNew => T("_New...", "新規(_N)...");
@@ -31,7 +51,7 @@ public static class Strings
     // File menu: editing
     // The command scans whatever the platform calls its program folder, so the
     // label names the place the user actually knows.
-    public static string MenuRefresh => OperatingSystem.IsMacOS()
+    public static string MenuRefresh => !OperatingSystem.IsWindows()
         ? T("Re_fresh from Applications", "アプリケーションから取り込み(_F)")
         : T("Re_fresh from Start Menu", "スタートメニューから取り込み(_F)");
     public static string NewTitle => T("New Program Object", "新規登録");
@@ -65,7 +85,7 @@ public static class Strings
     public static string ErrEmptyDescription => T("The description cannot be empty.", "説明を入力してください。");
 
     public static string RefreshResult(int groups, int items) => string.Format(
-        OperatingSystem.IsMacOS()
+        !OperatingSystem.IsWindows()
             ? T("Added {0} group(s) and {1} item(s) from Applications.", "アプリケーションから {0} 個のグループと {1} 個のアイテムを取り込みました。")
             : T("Added {0} group(s) and {1} item(s) from the Start Menu.", "スタート メニューから {0} 個のグループと {1} 個のアイテムを取り込みました。"),
         groups,

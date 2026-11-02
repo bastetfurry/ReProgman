@@ -74,9 +74,47 @@ jobs:
           path: ReProgman-osx-arm64.zip
           if-no-files-found: error
 
+  linux:
+    name: Linux (${{ matrix.rid }})
+    # NativeAOT does not cross-compile between Linux architectures without a
+    # sysroot, so each RID builds on a runner of its own architecture.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-latest
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # The NativeAOT linker step needs clang and the zlib headers.
+      - name: Install the native toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: Test
+        run: dotnet test
+
+      # Publishes NativeAOT and packs the executable with the Skia and HarfBuzz
+      # libraries into a tarball, which keeps the executable bit.
+      - name: Build the tarball
+        run: ./build/publish-linux.sh ${{ matrix.rid }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ReProgman-${{ matrix.rid }}
+          path: artifacts/publish-linux/ReProgman-${{ matrix.rid }}.tar.gz
+          if-no-files-found: error
+
   release:
     name: Draft release
-    needs: [windows, macos]
+    needs: [windows, macos, linux]
     runs-on: ubuntu-latest
     permissions:
       # gh release create writes to the repository.
@@ -85,7 +123,7 @@ jobs:
       # gh resolves the repository from the checkout.
       - uses: actions/checkout@v7
 
-      # merge-multiple puts the three zips side by side instead of in one
+      # merge-multiple puts the archives side by side instead of in one
       # directory per artifact.
       - uses: actions/download-artifact@v8
         with:
@@ -111,9 +149,9 @@ jobs:
           # Re-running the workflow with the same tag refreshes the assets of the
           # draft that is already there instead of failing.
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/*.zip --clobber
+            gh release upload "$tag" dist/* --clobber
           else
-            gh release create "$tag" dist/*.zip \
+            gh release create "$tag" dist/* \
               --draft \
               --target "$COMMIT" \
               --title "$tag" \
